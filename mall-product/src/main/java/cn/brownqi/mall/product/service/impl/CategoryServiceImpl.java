@@ -6,12 +6,11 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.TypeReference;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -103,33 +102,89 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
         return entities;
     }
 
+    // TODO 可能产生堆外内存溢出：OutOfDirMemoryError （lettuce 5.1.8 发现有这个异常，5.2.2 没有发现这个异常）
+    // 1、springboot2.0以后默认使用lettuce作为操作redis的客户端，使用netty进行网络通信
+    // 2、lettuce的bug导致netty堆外内存溢出,-Xmx300m：netty如果没有指定对外内存，默认使用-Xmx300m
+    //      可以通过 -Dio.netty.maxDirectMemory 进行设置
+    // 解决方案：不能只去调大对外内存
+    //      1)、升级lettuce客户端
+    //      2）、切换使用jedis客户端
     @Override
     public Map<String, List<CateLog2VO>> getCatalogJson() {
+
+        /**
+         * 1、空结果缓存：解决缓存穿透
+         * 2、设置过期时间（随机值）：解决缓存雪崩
+         * 3、加锁：解决缓存击穿
+         */
+
         // 1、加入缓存逻辑,缓存中存得数据value时 JSON 字符串，从缓存中拿出的 JSON 字符串，要逆转为相应的对象类型。（序列化与反序列化）
         // JSON 跨语言，跨平台
         String catalogJSON = stringRedisTemplate.opsForValue().get("catalogJSON");
-        if (StringUtils.isEmpty(catalogJSON)){
+        if (StringUtils.isEmpty(catalogJSON)) {
             // 2、缓存中没有，查询数据库
-            Map<String, List<CateLog2VO>> catalogJsonFromDB = getCatalogJsonFromDB();
-            // 3、将查到的数据放入缓存
-            String jsonCatalogJsonFromDB = JSON.toJSONString(catalogJsonFromDB);
-            stringRedisTemplate.opsForValue().set("catalogJSON",jsonCatalogJsonFromDB);
+            System.out.println("缓存未命中，查询数据库");
+            Map<String, List<CateLog2VO>> catalogJsonFromDB = getCatalogJsonFromDBWithRedisLock();
             // 4、返回从数据库查到的结果
             return catalogJsonFromDB;
         }
 
         // 转为我们指定的对象。
+        System.out.println("缓存命中，直接返回");
         Map<String, List<CateLog2VO>> result = JSON.parseObject(catalogJSON, new TypeReference<Map<String, List<CateLog2VO>>>() {
         });
         return result;
     }
 
     /**
-     * 从数据库查询并封装分类数据
+     * 从数据库查询并封装分类数据，redis 分布式锁
+     *
      * @return
      */
-    private Map<String, List<CateLog2VO>> getCatalogJsonFromDB() {
+    private Map<String, List<CateLog2VO>> getCatalogJsonFromDBWithRedisLock() {
 
+        // 1、占分布式锁，setnx redis
+        String uuid = UUID.randomUUID().toString();
+        // 抢占 redis 锁，并设定过期时间（原子性）
+        Boolean lock = stringRedisTemplate.opsForValue().setIfAbsent("lock", uuid, 30, TimeUnit.SECONDS);
+        if (lock) {
+            System.out.println("获取分布式锁成功");
+            Map<String, List<CateLog2VO>> dataFromDB;
+            try {
+                // 加锁成功...执行业务
+                dataFromDB = getDataFromDB();
+            }finally {
+                // 判断锁是否为当时的uuid，如果是，删除该锁（lua 脚本解锁）
+                String script = "if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end";
+                stringRedisTemplate.execute(new DefaultRedisScript<Long>(script, Long.class), Arrays.asList("lock"), uuid);
+            }
+            return dataFromDB;
+        } else {
+            System.out.println("获取分布式锁失败...等待重试");
+           // 加锁失败...重试
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            return getCatalogJsonFromDBWithRedisLock();// 自旋
+        }
+    }
+
+    /**
+     * 从数据库中查询并封装数据，无锁
+     *
+     * @return
+     */
+    private Map<String, List<CateLog2VO>> getDataFromDB() {
+        String catalogJSON = stringRedisTemplate.opsForValue().get("catalogJSON");
+        if (!StringUtils.isEmpty(catalogJSON)) {
+            // 缓存不为null直接返回
+            Map<String, List<CateLog2VO>> result = JSON.parseObject(catalogJSON, new TypeReference<Map<String, List<CateLog2VO>>>() {
+            });
+            return result;
+        }
+        System.out.println("查询了数据库");
         /**
          *  1、将数据库的多次查询变为一次（本地缓存）
          */
@@ -139,7 +194,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
         List<CategoryEntity> level1Categorys = getParent_cid(selectList, 0L);
 
         // 2、封装数据
-        Map<String, List<CateLog2VO>> parent_cid = level1Categorys.stream().collect(
+        Map<String, List<CateLog2VO>> catalogJsonFromDB = level1Categorys.stream().collect(
                 Collectors.toMap(
                         k -> k.getCatId().toString(),
                         v -> {
@@ -169,8 +224,26 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
                         }
                 )
         );
+        // 3、将查到的数据放入缓存
+        String jsonCatalogJsonFromDB = JSON.toJSONString(catalogJsonFromDB);
+        stringRedisTemplate.opsForValue().set("catalogJSON", jsonCatalogJsonFromDB, 1, TimeUnit.DAYS);
+        return catalogJsonFromDB;
+    }
 
-        return parent_cid;
+
+    /**
+     * 从数据库查询并封装分类数据，本地锁
+     *
+     * @return
+     */
+    private Map<String, List<CateLog2VO>> getCatalogJsonFromDBWithLocalLock() {
+
+        // TODO 本地锁只能锁住当前进程里面的资源，在分布式情况下，想要锁住所有，要是用分布式锁
+        synchronized (this) {
+            // 得到锁以后，应该再去缓存中确定一次，如果没有才需要继续查询
+            return getDataFromDB();
+        }
+
     }
 
     private List<CategoryEntity> getParent_cid(List<CategoryEntity> selectList, Long parent_cid) {
