@@ -4,6 +4,8 @@ import cn.brownqi.mall.product.service.CategoryBrandRelationService;
 import cn.brownqi.mall.product.vo.CateLog2VO;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.TypeReference;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -35,6 +37,9 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+
+    @Autowired
+    private RedissonClient redissonClient;
 
     @Override
     public PageUtils queryPage(Map<String, Object> params) {
@@ -94,6 +99,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
     public void updateCascade(CategoryEntity category) {
         this.updateById(category);
         categoryBrandRelationService.updateCategory(category.getCatId(), category.getName());
+        // TODO 同时修改缓存中的数据（双写模式） / 删除缓存中的数据（失效模式）
     }
 
     @Override
@@ -124,7 +130,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
         if (StringUtils.isEmpty(catalogJSON)) {
             // 2、缓存中没有，查询数据库
             System.out.println("缓存未命中，查询数据库");
-            Map<String, List<CateLog2VO>> catalogJsonFromDB = getCatalogJsonFromDBWithRedisLock();
+            Map<String, List<CateLog2VO>> catalogJsonFromDB = getCatalogJsonFromDBWithRedissonLock();
             // 4、返回从数据库查到的结果
             return catalogJsonFromDB;
         }
@@ -134,6 +140,34 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
         Map<String, List<CateLog2VO>> result = JSON.parseObject(catalogJSON, new TypeReference<Map<String, List<CateLog2VO>>>() {
         });
         return result;
+    }
+
+    /**
+     * 从数据库查询并封装分类数据，redisson 分布式锁
+     *
+     * 问题：缓存里面的数据如何和数据库保持一直
+     * 缓存数据一致性：
+     *  1）双写模式
+     *  2）失效模式
+     *
+     * @return
+     */
+    private Map<String, List<CateLog2VO>> getCatalogJsonFromDBWithRedissonLock() {
+
+        // 1、锁的名字 => 锁的粒度
+        // 具体缓存的是某个数据，例：11号商品：product-11-lock
+        RLock lock = redissonClient.getLock("catalogJson-lock");
+        lock.lock();
+
+        Map<String, List<CateLog2VO>> dataFromDB;
+        try {
+            // 加锁成功...执行业务
+            dataFromDB = getDataFromDB();
+        } finally {
+            lock.unlock();
+        }
+        return dataFromDB;
+
     }
 
     /**
@@ -153,7 +187,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
             try {
                 // 加锁成功...执行业务
                 dataFromDB = getDataFromDB();
-            }finally {
+            } finally {
                 // 判断锁是否为当时的uuid，如果是，删除该锁（lua 脚本解锁）
                 String script = "if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end";
                 stringRedisTemplate.execute(new DefaultRedisScript<Long>(script, Long.class), Arrays.asList("lock"), uuid);
@@ -161,7 +195,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
             return dataFromDB;
         } else {
             System.out.println("获取分布式锁失败...等待重试");
-           // 加锁失败...重试
+            // 加锁失败...重试
             try {
                 Thread.sleep(200);
             } catch (InterruptedException e) {
