@@ -79,6 +79,11 @@
             <version>3.12.5</version>
         </dependency>
 
+        <!-- 引入spring-boot-cache -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

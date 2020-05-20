@@ -7,6 +7,7 @@ import com.alibaba.fastjson.TypeReference;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -102,6 +103,8 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
         // TODO 同时修改缓存中的数据（双写模式） / 删除缓存中的数据（失效模式）
     }
 
+    // 每一个需要缓存的数据，我们都来指定要放到哪个名字的缓存。（缓存分区 - 按照业务类型分）
+    @Cacheable(value = {"category"},key = "#root.method.name")  // 代表当前方法的结果需要缓存，如果缓存中有，方法不用调用。如果缓存中没有，会调用方法，最后将方法的结果放入缓存
     @Override
     public List<CategoryEntity> getLevel1Categorys() {
         List<CategoryEntity> entities = baseMapper.selectList(new QueryWrapper<CategoryEntity>().eq("parent_cid", 0));
