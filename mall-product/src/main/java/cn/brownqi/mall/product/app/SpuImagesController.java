@@ -1,4 +1,4 @@
-package cn.brownqi.mall.product.controller;
+package cn.brownqi.mall.product.app;
 
 import java.util.Arrays;
 import java.util.Map;

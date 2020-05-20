@@ -1,4 +1,4 @@
-package cn.brownqi.mall.product.controller;
+package cn.brownqi.mall.product.app;
 
 import java.util.Arrays;
 import java.util.List;
@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import cn.brownqi.mall.product.entity.CategoryEntity;
 import cn.brownqi.mall.product.service.CategoryService;
-import cn.brownqi.common.utils.PageUtils;
 import cn.brownqi.common.utils.R;
 
 

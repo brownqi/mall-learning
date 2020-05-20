@@ -1,14 +1,12 @@
-package cn.brownqi.mall.product.controller;
+package cn.brownqi.mall.product.app;
 
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.Map;
 
 import cn.brownqi.common.valid.AddGroup;
 import cn.brownqi.common.valid.UpdateGroup;
 import cn.brownqi.common.valid.UpdateStatusGroup;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.validation.BindingResult;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,8 +18,6 @@ import cn.brownqi.mall.product.entity.BrandEntity;
 import cn.brownqi.mall.product.service.BrandService;
 import cn.brownqi.common.utils.PageUtils;
 import cn.brownqi.common.utils.R;
-
-import javax.validation.Valid;
 
 
 /**

@@ -1,4 +1,4 @@
-package cn.brownqi.mall.product.controller;
+package cn.brownqi.mall.product.app;
 
 import java.util.Arrays;
 import java.util.List;
@@ -6,13 +6,11 @@ import java.util.Map;
 
 import cn.brownqi.mall.product.entity.ProductAttrValueEntity;
 import cn.brownqi.mall.product.service.ProductAttrValueService;
-import cn.brownqi.mall.product.vo.AttrGroupRelationVO;
 import cn.brownqi.mall.product.vo.AttrRespVO;
 import cn.brownqi.mall.product.vo.AttrVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import cn.brownqi.mall.product.entity.AttrEntity;
 import cn.brownqi.mall.product.service.AttrService;
 import cn.brownqi.common.utils.PageUtils;
 import cn.brownqi.common.utils.R;
