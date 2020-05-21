@@ -1,5 +1,6 @@
 package cn.brownqi.mall.product.service;
 
+import cn.brownqi.mall.product.vo.CateLog2VO;
 import com.baomidou.mybatisplus.extension.service.IService;
 import cn.brownqi.common.utils.PageUtils;
 import cn.brownqi.mall.product.entity.CategoryEntity;
@@ -31,5 +32,9 @@ public interface CategoryService extends IService<CategoryEntity> {
     Long[] findCatelogPath(Long catelogId);
 
     void updateCascade(CategoryEntity category);
+
+    List<CategoryEntity> getLevel1Categorys();
+
+    Map<String, List<CateLog2VO>> getCatalogJson();
 }
 

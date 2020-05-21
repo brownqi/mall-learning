@@ -12,6 +12,11 @@ spring:
         server-addr: 127.0.0.1:8848
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
+  thymeleaf:
+    cache: true
+  redis:
+    host: 192.168.56.10
+    port: 6379
 
 mybatis-plus:
   mapper-locations: classpath:/mapper/**/*.xml
@@ -26,4 +31,5 @@ server:
 
 logging:
   level:
-    cn.brownqi.mall: debug
+    cn.brownqi.mall: error
+
