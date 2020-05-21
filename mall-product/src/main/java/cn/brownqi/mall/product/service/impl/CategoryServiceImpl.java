@@ -7,7 +7,9 @@ import com.alibaba.fastjson.TypeReference;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -95,6 +97,13 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
      *
      * @param category
      */
+
+
+//    @Caching(evict = {  // 同时进行多种缓存操作
+//            @CacheEvict(value = "category",key = "'getLevel1Categorys'"), // 缓存失效模式,
+//            @CacheEvict(value = "category",key="'getCatalogJson'")
+//    })
+    @CacheEvict(value = "category",allEntries = true)   // 指定删除某个分区下的所有数据
     @Transactional
     @Override
     public void updateCascade(CategoryEntity category) {
@@ -104,7 +113,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
     }
 
     // 每一个需要缓存的数据，我们都来指定要放到哪个名字的缓存。（缓存分区 - 按照业务类型分）
-    @Cacheable(value = {"category"},key = "#root.method.name")  // 代表当前方法的结果需要缓存，如果缓存中有，方法不用调用。如果缓存中没有，会调用方法，最后将方法的结果放入缓存
+    @Cacheable(value = {"category"},key = "#root.method.name",sync = true)  // 代表当前方法的结果需要缓存，如果缓存中有，方法不用调用。如果缓存中没有，会调用方法，最后将方法的结果放入缓存
     @Override
     public List<CategoryEntity> getLevel1Categorys() {
         List<CategoryEntity> entities = baseMapper.selectList(new QueryWrapper<CategoryEntity>().eq("parent_cid", 0));
@@ -118,8 +127,57 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryDao, CategoryEntity
     // 解决方案：不能只去调大对外内存
     //      1)、升级lettuce客户端
     //      2）、切换使用jedis客户端
+
+
+    @Cacheable(value = "category",key = "#root.methodName")
     @Override
     public Map<String, List<CateLog2VO>> getCatalogJson() {
+        System.out.println("查询了数据库");
+        /**
+         *  1、将数据库的多次查询变为一次（本地缓存）
+         */
+        List<CategoryEntity> selectList = baseMapper.selectList(null);
+
+        // 1、查出所有1级分类
+        List<CategoryEntity> level1Categorys = getParent_cid(selectList, 0L);
+
+        // 2、封装数据
+        Map<String, List<CateLog2VO>> catalogJsonFromDB = level1Categorys.stream().collect(
+                Collectors.toMap(
+                        k -> k.getCatId().toString(),
+                        v -> {
+                            // 1、每一个的一级分类，查到这个一级分类的二级分类
+                            List<CategoryEntity> categoryEntities =
+                                    getParent_cid(selectList, v.getCatId());
+
+                            // 2、封装上面的结果
+                            List<CateLog2VO> cateLog2VOList = null;
+                            if (categoryEntities != null) {
+                                cateLog2VOList = categoryEntities.stream().map(l2 -> {
+                                    CateLog2VO cateLog2VO = new CateLog2VO(v.getCatId().toString(), null, l2.getCatId().toString(), l2.getName());
+                                    // 1、找当前二级分类的三级分类封装成VO
+                                    List<CategoryEntity> level3Categorys = getParent_cid(selectList, l2.getCatId());
+                                    if (level3Categorys != null) {
+                                        List<CateLog2VO.Catelog3VO> catalog3VOList = level3Categorys.stream().map(l3 -> {
+                                            // 2、封装成指定格式
+                                            CateLog2VO.Catelog3VO catalog3VO = new CateLog2VO.Catelog3VO(l2.getCatId().toString(), l3.getCatId().toString(), l3.getName());
+                                            return catalog3VO;
+                                        }).collect(Collectors.toList());
+                                        cateLog2VO.setCatalog3List(catalog3VOList);
+                                    }
+                                    return cateLog2VO;
+                                }).collect(Collectors.toList());
+                            }
+                            return cateLog2VOList;
+                        }
+                )
+        );
+        return catalogJsonFromDB;
+
+    }
+
+    //    @Override
+    public Map<String, List<CateLog2VO>> getCatalogJsonCacheByRedis() {
 
         /**
          * 1、空结果缓存：解决缓存穿透
